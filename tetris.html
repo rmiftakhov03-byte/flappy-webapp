@@ -1,1 +1,520 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Тетрис</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg-top: #241B3A;
+    --bg-bottom: #120C22;
+    --board-bg: #1A1330;
+    --board-border: #4A3A7A;
+    --card: #FFFDF7;
+    --ink: #23303A;
+    --accent: #F0693A;
+    --muted: #8a8aa5;
+    --grid-line: rgba(255,255,255,0.04);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+    touch-action: manipulation;
+  }
+  #app {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #fff;
+  }
+  #topbar {
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    justify-content: space-between;
+    padding: max(10px, env(safe-area-inset-top)) 16px 6px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #topbar .val { color: #fff; font-weight: 700; font-size: 16px; }
+  #stage {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 0;
+  }
+  #board-wrap { position: relative; height: 100%; display: flex; align-items: center; }
+  canvas#board {
+    background: var(--board-bg);
+    border-radius: 10px;
+    border: 2px solid var(--board-border);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  #side {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 84px;
+  }
+  .box {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 8px;
+    text-align: center;
+  }
+  .box .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  canvas#next { width: 64px; height: 64px; }
+  #controls {
+    width: 100%;
+    max-width: 420px;
+    padding: 8px 14px max(14px, env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  #controls button {
+    border: none;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    font-size: 20px;
+    padding: 14px 0;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  #controls button:active { background: rgba(255,255,255,0.2); }
+  #controls .rotate { color: #FFD166; font-weight: 800; font-size: 15px; }
+  #controls .drop { grid-column: span 1; background: rgba(240,105,58,0.25); border-color: rgba(240,105,58,0.4); }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10,6,20,0.75);
+    z-index: 10;
+    padding: 20px;
+  }
+  #overlay.hidden { display: none; }
+  .panel {
+    background: var(--card);
+    color: var(--ink);
+    border-radius: 20px;
+    padding: 26px 26px;
+    text-align: center;
+    max-width: 300px;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.35);
+  }
+  .panel h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.5px; }
+  .panel p { margin: 0 0 16px; color: #5b6b76; font-size: 13px; line-height: 1.4; }
+  .diff-row { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+  .diff-btn {
+    border: none;
+    border-radius: 12px;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #fff;
+  }
+  .diff-easy { background: #4CAF7D; }
+  .diff-medium { background: #F0A63A; }
+  .diff-hard { background: #E0503A; }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0;
+    padding: 9px 14px;
+    background: #F4F1E6;
+    border-radius: 10px;
+    font-size: 13px;
+  }
+  .stat-row b { color: var(--accent); }
+  button.play {
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 11px 26px;
+    border-radius: 999px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  #send-score {
+    display: block;
+    margin: 10px auto 0;
+    background: none;
+    border: none;
+    color: #8a97a1;
+    font-size: 12px;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div>Счёт<br><span class="val" id="score">0</span></div>
+    <div>Уровень<br><span class="val" id="level">1</span></div>
+    <div>Линии<br><span class="val" id="lines">0</span></div>
+  </div>
+  <div id="stage">
+    <div id="board-wrap"><canvas id="board"></canvas></div>
+    <div id="side">
+      <div class="box"><div class="label">Далее</div><canvas id="next"></canvas></div>
+      <div class="box"><div class="label">Сложность</div><div class="val" id="diffLabel" style="font-size:13px;">—</div></div>
+    </div>
+  </div>
+  <div id="controls">
+    <button id="btn-left">⬅️ A</button>
+    <button id="btn-s" class="rotate">S ↺</button>
+    <button id="btn-w" class="rotate">W ↻</button>
+    <button id="btn-right">➡️ D</button>
+    <button id="btn-down" style="grid-column: span 2;">⬇️ Мягко</button>
+    <button id="btn-drop" class="drop" style="grid-column: span 2;">⏬ Сброс</button>
+  </div>
 
+  <div id="overlay">
+    <div class="panel" id="panel">
+      <h1>Тетрис</h1>
+      <p>Выбери сложность. A/D — влево/вправо, W/S — вращение по/против часовой.</p>
+      <div class="diff-row">
+        <button class="diff-btn diff-easy" data-diff="easy">Лёгкий</button>
+        <button class="diff-btn diff-medium" data-diff="medium">Средний</button>
+        <button class="diff-btn diff-hard" data-diff="hard">Тяжёлый</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const tg = window.Telegram ? window.Telegram.WebApp : null;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const COLS = 10, ROWS = 20;
+  const COLORS = {
+    I: '#4FD8E8', O: '#F5D142', T: '#B15CE8', S: '#4CD97D',
+    Z: '#E85C5C', J: '#4C7FE8', L: '#F09A3C'
+  };
+  const SHAPES = {
+    I: [[0,1],[1,1],[2,1],[3,1]],
+    O: [[1,0],[2,0],[1,1],[2,1]],
+    T: [[1,0],[0,1],[1,1],[2,1]],
+    S: [[1,0],[2,0],[0,1],[1,1]],
+    Z: [[0,0],[1,0],[1,1],[2,1]],
+    J: [[0,0],[0,1],[1,1],[2,1]],
+    L: [[2,0],[0,1],[1,1],[2,1]]
+  };
+  const DIFFS = {
+    easy:   { start: 800, minSpeed: 260, speedStep: 40, linesPerLevel: 10, name: 'Лёгкий' },
+    medium: { start: 520, minSpeed: 140, speedStep: 45, linesPerLevel: 8,  name: 'Средний' },
+    hard:   { start: 320, minSpeed: 90,  speedStep: 30, linesPerLevel: 6,  name: 'Тяжёлый' }
+  };
+
+  const boardCanvas = document.getElementById('board');
+  const bctx = boardCanvas.getContext('2d');
+  const nextCanvas = document.getElementById('next');
+  const nctx = nextCanvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const linesEl = document.getElementById('lines');
+  const diffLabelEl = document.getElementById('diffLabel');
+  const overlay = document.getElementById('overlay');
+  const panel = document.getElementById('panel');
+
+  let CELL = 24;
+  function sizeBoard() {
+    const stage = document.getElementById('stage');
+    const availH = stage.clientHeight - 8;
+    const availW = stage.clientWidth - 100;
+    CELL = Math.floor(Math.min(availH / ROWS, availW / COLS));
+    CELL = Math.max(14, Math.min(CELL, 30));
+    boardCanvas.width = COLS * CELL;
+    boardCanvas.height = ROWS * CELL;
+    nextCanvas.width = 64; nextCanvas.height = 64;
+  }
+  window.addEventListener('resize', sizeBoard);
+
+  let grid, cur, next, diffKey, diff, dropInterval, dropTimer, score, level, lines, state, lastTime, softDrop;
+
+  function emptyGrid() {
+    return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  }
+
+  function randomType() {
+    const keys = Object.keys(SHAPES);
+    return keys[Math.floor(Math.random() * keys.length)];
+  }
+
+  function newPiece(type) {
+    const cells = SHAPES[type].map(([x, y]) => ({ x: x + 3, y: y - 1 }));
+    return { type, cells, rotN: 0 };
+  }
+
+  function rotateCells(cells, dir) {
+    const cx = cells.reduce((s, c) => s + c.x, 0) / cells.length;
+    const cy = cells.reduce((s, c) => s + c.y, 0) / cells.length;
+    return cells.map(c => {
+      const rx = c.x - cx, ry = c.y - cy;
+      const nx = dir > 0 ? -ry : ry;
+      const ny = dir > 0 ? rx : -rx;
+      return { x: Math.round(cx + nx), y: Math.round(cy + ny) };
+    });
+  }
+
+  function collides(cells) {
+    for (const c of cells) {
+      if (c.x < 0 || c.x >= COLS || c.y >= ROWS) return true;
+      if (c.y >= 0 && grid[c.y][c.x]) return true;
+    }
+    return false;
+  }
+
+  function tryRotate(dir) {
+    if (cur.type === 'O') return;
+    const rotated = rotateCells(cur.cells, dir);
+    const kicks = [0, -1, 1, -2, 2];
+    for (const k of kicks) {
+      const shifted = rotated.map(c => ({ x: c.x + k, y: c.y }));
+      if (!collides(shifted)) {
+        cur.cells = shifted;
+        return;
+      }
+    }
+  }
+
+  function lockPiece() {
+    for (const c of cur.cells) {
+      if (c.y < 0) { gameOver(); return; }
+      grid[c.y][c.x] = COLORS[cur.type];
+    }
+    clearLines();
+    spawnNext();
+  }
+
+  function clearLines() {
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (grid[y].every(cell => cell)) {
+        grid.splice(y, 1);
+        grid.unshift(Array(COLS).fill(null));
+        cleared++;
+        y++;
+      }
+    }
+    if (cleared > 0) {
+      const points = [0, 100, 300, 500, 800][cleared] * level;
+      score += points;
+      lines += cleared;
+      scoreEl.textContent = score;
+      linesEl.textContent = lines;
+      const newLevel = 1 + Math.floor(lines / diff.linesPerLevel);
+      if (newLevel !== level) {
+        level = newLevel;
+        levelEl.textContent = level;
+        dropInterval = Math.max(diff.minSpeed, diff.start - (level - 1) * diff.speedStep);
+      }
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(cleared >= 4 ? 'heavy' : 'light');
+    }
+  }
+
+  function spawnNext() {
+    cur = next;
+    next = newPiece(randomType());
+    drawNext();
+    if (collides(cur.cells)) gameOver();
+  }
+
+  function gameOver() {
+    state = 'over';
+    clearInterval(dropTimer);
+    panel.innerHTML = `
+      <h1>Игра окончена</h1>
+      <div class="stat-row"><span>Счёт</span><b>${score}</b></div>
+      <div class="stat-row"><span>Уровень</span><b>${level}</b></div>
+      <div class="stat-row"><span>Линии</span><b>${lines}</b></div>
+      <div class="stat-row"><span>Сложность</span><b>${diff.name}</b></div>
+      <button class="play" id="btn-restart">Ещё раз</button>
+      ${tg ? '<button id="send-score">Отправить результат в чат</button>' : ''}
+    `;
+    overlay.classList.remove('hidden');
+    document.getElementById('btn-restart').addEventListener('click', () => {
+      overlay.classList.add('hidden');
+      showDiffSelect();
+    });
+    const sendBtn = document.getElementById('send-score');
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => {
+        tg.sendData(JSON.stringify({ type: 'tetris_score', score, level, lines, difficulty: diffKey }));
+      });
+    }
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+  }
+
+  function showDiffSelect() {
+    panel.innerHTML = `
+      <h1>Тетрис</h1>
+      <p>Выбери сложность. A/D — влево/вправо, W/S — вращение по/против часовой.</p>
+      <div class="diff-row">
+        <button class="diff-btn diff-easy" data-diff="easy">Лёгкий</button>
+        <button class="diff-btn diff-medium" data-diff="medium">Средний</button>
+        <button class="diff-btn diff-hard" data-diff="hard">Тяжёлый</button>
+      </div>
+    `;
+    overlay.classList.remove('hidden');
+    panel.querySelectorAll('.diff-btn').forEach(btn => {
+      btn.addEventListener('click', () => startGame(btn.dataset.diff));
+    });
+  }
+
+  function startGame(key) {
+    diffKey = key;
+    diff = DIFFS[key];
+    diffLabelEl.textContent = diff.name;
+    grid = emptyGrid();
+    score = 0; level = 1; lines = 0;
+    scoreEl.textContent = 0; levelEl.textContent = 1; linesEl.textContent = 0;
+    dropInterval = diff.start;
+    cur = newPiece(randomType());
+    next = newPiece(randomType());
+    drawNext();
+    state = 'playing';
+    overlay.classList.add('hidden');
+    restartDropTimer();
+  }
+
+  function restartDropTimer() {
+    clearInterval(dropTimer);
+    dropTimer = setInterval(() => {
+      if (state === 'playing') step();
+    }, dropInterval);
+  }
+
+  function step() {
+    const moved = cur.cells.map(c => ({ x: c.x, y: c.y + 1 }));
+    if (collides(moved)) {
+      lockPiece();
+    } else {
+      cur.cells = moved;
+    }
+    draw();
+  }
+
+  function move(dx) {
+    if (state !== 'playing') return;
+    const moved = cur.cells.map(c => ({ x: c.x + dx, y: c.y }));
+    if (!collides(moved)) { cur.cells = moved; draw(); }
+  }
+
+  function softDropStep() {
+    if (state !== 'playing') return;
+    const moved = cur.cells.map(c => ({ x: c.x, y: c.y + 1 }));
+    if (!collides(moved)) { cur.cells = moved; score += 1; scoreEl.textContent = score; }
+    draw();
+  }
+
+  function hardDrop() {
+    if (state !== 'playing') return;
+    let moved = cur.cells;
+    while (true) {
+      const next2 = moved.map(c => ({ x: c.x, y: c.y + 1 }));
+      if (collides(next2)) break;
+      moved = next2;
+      score += 2;
+    }
+    cur.cells = moved;
+    scoreEl.textContent = score;
+    lockPiece();
+    draw();
+    restartDropTimer();
+  }
+
+  function rotate(dir) {
+    if (state !== 'playing') return;
+    tryRotate(dir);
+    draw();
+  }
+
+  function drawCell(ctx, x, y, size, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, size, size);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(x, y, size, size * 0.22);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(x, y + size * 0.78, size, size * 0.22);
+  }
+
+  function draw() {
+    bctx.clearRect(0, 0, boardCanvas.width, boardCanvas.height);
+    bctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    for (let x = 0; x <= COLS; x++) {
+      bctx.beginPath(); bctx.moveTo(x * CELL, 0); bctx.lineTo(x * CELL, ROWS * CELL); bctx.stroke();
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      bctx.beginPath(); bctx.moveTo(0, y * CELL); bctx.lineTo(COLS * CELL, y * CELL); bctx.stroke();
+    }
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (grid[y][x]) drawCell(bctx, x * CELL, y * CELL, CELL - 1, grid[y][x]);
+      }
+    }
+    if (cur) {
+      for (const c of cur.cells) {
+        if (c.y >= 0) drawCell(bctx, c.x * CELL, c.y * CELL, CELL - 1, COLORS[cur.type]);
+      }
+    }
+  }
+
+  function drawNext() {
+    nctx.clearRect(0, 0, 64, 64);
+    const cells = SHAPES[next.type];
+    const size = 13;
+    const offX = (64 - 4 * size) / 2;
+    const offY = (64 - 2.5 * size) / 2;
+    for (const [x, y] of cells) {
+      drawCell(nctx, offX + x * size, offY + y * size, size - 1, COLORS[next.type]);
+    }
+  }
+
+  document.getElementById('btn-left').addEventListener('click', () => move(-1));
+  document.getElementById('btn-right').addEventListener('click', () => move(1));
+  document.getElementById('btn-w').addEventListener('click', () => rotate(1));
+  document.getElementById('btn-s').addEventListener('click', () => rotate(-1));
+  document.getElementById('btn-down').addEventListener('click', softDropStep);
+  document.getElementById('btn-drop').addEventListener('click', hardDrop);
+
+  window.addEventListener('keydown', (e) => {
+    if (state !== 'playing') return;
+    switch (e.key.toLowerCase()) {
+      case 'arrowleft': move(-1); break;
+      case 'arrowright': move(1); break;
+      case 'arrowdown': softDropStep(); break;
+      case ' ': hardDrop(); break;
+      case 'a': move(-1); break;  // A — влево
+      case 'd': move(1); break;   // D — вправо
+      case 'w': rotate(1); break; // W — по часовой
+      case 's': rotate(-1); break; // S — против часовой
+    }
+  });
+
+  sizeBoard();
+  grid = emptyGrid();
+  draw();
+  panel.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.addEventListener('click', () => startGame(btn.dataset.diff));
+  });
+})();
+</script>
+</body>
+</html>
