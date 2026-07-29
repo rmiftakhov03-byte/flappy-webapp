@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Flappy Bird</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --sky-top: #6EC6E8;
+    --sky-bottom: #BFE9D4;
+    --pipe: #4CAF7D;
+    --pipe-dark: #3B8C63;
+    --ground: #DCC48A;
+    --ground-dark: #C4A968;
+    --bird: #F5B942;
+    --bird-belly: #FFF3D6;
+    --ink: #23303A;
+    --card: #FFFDF7;
+    --accent: #F0693A;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--sky-top);
+    touch-action: manipulation;
+  }
+  #game-wrap {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  canvas {
+    display: block;
+    background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-bottom) 100%);
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+  #hud {
+    position: absolute;
+    top: max(16px, env(safe-area-inset-top));
+    left: 0; right: 0;
+    text-align: center;
+    pointer-events: none;
+    z-index: 5;
+  }
+  #score {
+    font-size: 42px;
+    font-weight: 800;
+    color: var(--card);
+    text-shadow: 0 2px 0 rgba(35,48,58,0.55), 0 4px 10px rgba(0,0,0,0.15);
+    letter-spacing: 1px;
+  }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    z-index: 10;
+    background: rgba(35,48,58,0.28);
+  }
+  #overlay.hidden { display: none; }
+  .panel {
+    background: var(--card);
+    border-radius: 20px;
+    padding: 28px 32px;
+    text-align: center;
+    box-shadow: 0 12px 28px rgba(0,0,0,0.25);
+    max-width: 280px;
+  }
+  .panel h1 {
+    margin: 0 0 6px;
+    font-size: 26px;
+    color: var(--ink);
+    letter-spacing: -0.5px;
+  }
+  .panel p {
+    margin: 0 0 18px;
+    color: #5b6b76;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 4px 0 18px;
+    padding: 10px 16px;
+    background: #F4F1E6;
+    border-radius: 12px;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .stat-row b { color: var(--accent); }
+  button.play {
+    border: none;
+    background: var(--accent);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 12px 28px;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 6px 14px rgba(240,105,58,0.35);
+  }
+  button.play:active { transform: translateY(1px); }
+  #send-score {
+    margin-top: 10px;
+    background: none;
+    border: none;
+    color: #8a97a1;
+    font-size: 13px;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="game-wrap">
+  <canvas id="game"></canvas>
+  <div id="hud"><div id="score">0</div></div>
+  <div id="overlay">
+    <div class="panel" id="panel-start">
+      <h1>Flappy Bird</h1>
+      <p>Тапай по экрану, чтобы птица летела вверх. Пролетай между трубами.</p>
+      <button class="play" id="btn-start">Играть</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const tg = window.Telegram ? window.Telegram.WebApp : null;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const overlay = document.getElementById('overlay');
+  const panelStart = document.getElementById('panel-start');
+  const btnStart = document.getElementById('btn-start');
+
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.min(window.innerWidth, 480);
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const GRAVITY = 1500;
+  const FLAP_V = -420;
+  const PIPE_GAP = 165;
+  const PIPE_W = 62;
+  const PIPE_SPEED = 150;
+  const PIPE_INTERVAL = 1450;
+  const GROUND_H = 90;
+
+  let bird, pipes, score, best, state, lastTime, spawnTimer, groundOffset;
+
+  best = parseInt(localStorage.getItem('flappy_best') || '0', 10) || 0;
+
+  function reset() {
+    bird = { x: W * 0.3, y: H * 0.4, vy: 0, r: 16, rot: 0 };
+    pipes = [];
+    score = 0;
+    spawnTimer = 0;
+    groundOffset = 0;
+    scoreEl.textContent = '0';
+    state = 'ready';
+  }
+
+  function flap() {
+    if (state === 'ready') { state = 'playing'; }
+    if (state === 'playing') { bird.vy = FLAP_V; }
+    if (state === 'over') { /* handled by button */ }
+  }
+
+  function spawnPipe() {
+    const margin = 60;
+    const usable = H - GROUND_H - margin * 2 - PIPE_GAP;
+    const top = margin + Math.random() * Math.max(usable, 40);
+    pipes.push({ x: W + PIPE_W, top: top, passed: false });
+  }
+
+  function rectsOverlapCircle(cx, cy, cr, rx, ry, rw, rh) {
+    const nx = Math.max(rx, Math.min(cx, rx + rw));
+    const ny = Math.max(ry, Math.min(cy, ry + rh));
+    const dx = cx - nx, dy = cy - ny;
+    return (dx * dx + dy * dy) < (cr * cr);
+  }
+
+  function update(dt) {
+    groundOffset = (groundOffset + PIPE_SPEED * dt) % 40;
+
+    if (state !== 'playing') return;
+
+    bird.vy += GRAVITY * dt;
+    bird.y += bird.vy * dt;
+    bird.rot = Math.max(-0.5, Math.min(1.2, bird.vy / 500));
+
+    spawnTimer += dt * 1000;
+    if (spawnTimer >= PIPE_INTERVAL) {
+      spawnTimer = 0;
+      spawnPipe();
+    }
+
+    for (const p of pipes) {
+      p.x -= PIPE_SPEED * dt;
+      if (!p.passed && p.x + PIPE_W < bird.x - bird.r) {
+        p.passed = true;
+        score++;
+        scoreEl.textContent = score;
+      }
+    }
+    pipes = pipes.filter(p => p.x > -PIPE_W - 5);
+
+    if (bird.y + bird.r > H - GROUND_H || bird.y - bird.r < 0) {
+      gameOver();
+      return;
+    }
+    for (const p of pipes) {
+      if (
+        rectsOverlapCircle(bird.x, bird.y, bird.r - 2, p.x, 0, PIPE_W, p.top) ||
+        rectsOverlapCircle(bird.x, bird.y, bird.r - 2, p.x, p.top + PIPE_GAP, PIPE_W, H)
+      ) {
+        gameOver();
+        return;
+      }
+    }
+  }
+
+  function gameOver() {
+    state = 'over';
+    if (score > best) {
+      best = score;
+      localStorage.setItem('flappy_best', String(best));
+    }
+    showOverPanel();
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+  }
+
+  function showOverPanel() {
+    panelStart.innerHTML = `
+      <h1>Игра окончена</h1>
+      <div class="stat-row"><span>Очки</span><b>${score}</b></div>
+      <div class="stat-row"><span>Рекорд</span><b>${best}</b></div>
+      <button class="play" id="btn-restart">Ещё раз</button>
+      ${tg ? '<button id="send-score">Отправить результат в чат</button>' : ''}
+    `;
+    overlay.classList.remove('hidden');
+    document.getElementById('btn-restart').addEventListener('click', () => {
+      overlay.classList.add('hidden');
+      reset();
+    });
+    const sendBtn = document.getElementById('send-score');
+    if (sendBtn) {
+      sendBtn.addEventListener('click', () => {
+        tg.sendData(JSON.stringify({ type: 'flappy_score', score: score, best: best }));
+      });
+    }
+  }
+
+  function drawBackgroundClouds(t) {
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#FFFFFF';
+    for (let i = 0; i < 3; i++) {
+      const cx = ((t * 20 + i * 220) % (W + 160)) - 80;
+      const cy = 60 + i * 70;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 34, 16, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx + 22, cy + 4, 24, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawPipe(p) {
+    const capH = 22;
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--pipe');
+    ctx.fillRect(p.x, 0, PIPE_W, p.top);
+    ctx.fillRect(p.x, p.top + PIPE_GAP, PIPE_W, H - GROUND_H - (p.top + PIPE_GAP));
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--pipe-dark');
+    ctx.fillRect(p.x - 4, p.top - capH, PIPE_W + 8, capH);
+    ctx.fillRect(p.x - 4, p.top + PIPE_GAP, PIPE_W + 8, capH);
+  }
+
+  function drawBird() {
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(bird.rot);
+    ctx.fillStyle = '#F5B942';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, bird.r, bird.r * 0.85, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFF3D6';
+    ctx.beginPath();
+    ctx.ellipse(-3, 4, bird.r * 0.55, bird.r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#F0693A';
+    ctx.beginPath();
+    ctx.moveTo(bird.r - 2, -2);
+    ctx.lineTo(bird.r + 12, 2);
+    ctx.lineTo(bird.r - 2, 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#23303A';
+    ctx.beginPath();
+    ctx.arc(5, -6, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawGround() {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ground');
+    ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ground-dark');
+    for (let x = -40 + -groundOffset; x < W + 40; x += 40) {
+      ctx.fillRect(x, H - GROUND_H, 20, 10);
+    }
+  }
+
+  let t0 = 0;
+  function render(t) {
+    ctx.clearRect(0, 0, W, H);
+    drawBackgroundClouds(t / 1000);
+    for (const p of pipes) drawPipe(p);
+    drawGround();
+    drawBird();
+  }
+
+  function loop(ts) {
+    if (!lastTime) lastTime = ts;
+    const dt = Math.min((ts - lastTime) / 1000, 0.033);
+    lastTime = ts;
+    update(dt);
+    render(ts);
+    requestAnimationFrame(loop);
+  }
+
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    flap();
+  });
+
+  btnStart.addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    reset();
+    state = 'playing';
+  });
+
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
